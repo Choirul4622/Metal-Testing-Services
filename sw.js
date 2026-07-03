@@ -8,8 +8,7 @@ const ASSETS_TO_CACHE = [
   "./",
   "./index.html",
   "./style.css",
-  "./app.js",
-  "https://soviajewelry.com/wp-content/uploads/2021/12/logo-sovia-gold.png"
+  "./app.js"
 ];
 
 // Install Event - Cache assets
