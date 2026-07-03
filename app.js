@@ -892,6 +892,60 @@ function populateDropdownSelectors() {
 // ==========================================
 let productRowCounter = 0;
 
+// Auto-generate ID Layanan berikutnya secara offline-safe
+function generateNextServiceId() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const date = String(now.getDate()).padStart(2, "0");
+  const prefix = `SRV-${year}${month}${date}`;
+  
+  let maxSeq = 1000;
+  state.transactions.forEach(t => {
+    if (t.id && t.id.startsWith(prefix)) {
+      const parts = t.id.split("-");
+      if (parts.length === 3) {
+        const seq = parseInt(parts[2], 10);
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
+      }
+    }
+  });
+  return `${prefix}-${maxSeq + 1}`;
+}
+
+// Toggle input persentase komposisi
+window.toggleCompInput = function(chk, rowId) {
+  const inputVal = chk.parentElement.querySelector(".row-comp-val");
+  if (chk.checked) {
+    inputVal.style.display = "inline-block";
+    inputVal.required = true;
+    inputVal.value = "100"; // default 100% jika dipilih
+  } else {
+    inputVal.style.display = "none";
+    inputVal.required = false;
+    inputVal.value = "";
+  }
+  updateCompositionString(rowId);
+};
+
+// Kompilasi komposisi bahan menjadi string (contoh: "Emas (75%) + Perak (25%)")
+window.updateCompositionString = function(rowId) {
+  const row = document.getElementById(`product-row-${rowId}`);
+  if (!row) return;
+  
+  const compParts = [];
+  row.querySelectorAll(".row-comp-check:checked").forEach(chk => {
+    const inputVal = chk.parentElement.querySelector(".row-comp-val");
+    const val = inputVal ? inputVal.value : "0";
+    compParts.push(`${chk.value} (${val}%)`);
+  });
+  
+  const compiled = compParts.join(" + ");
+  document.getElementById(`composition-compiled-${rowId}`).value = compiled;
+};
+
 function addProductRow(data = null) {
   productRowCounter++;
   const container = document.getElementById("product-rows-container");
@@ -900,39 +954,57 @@ function addProductRow(data = null) {
   rowDiv.className = "product-item-row";
   rowDiv.id = `product-row-${productRowCounter}`;
   
-  // Metal options
-  let metalOpts = `<option value="">-- Jenis Logam --</option>`;
-  (state.masterData.JenisLogam || []).forEach(m => {
-    metalOpts += `<option value="${m.name}" data-purity="${m.value}">${m.name}</option>`;
+  // Dapatkan ID Layanan aktif
+  const idLayanan = document.getElementById("layanan-id-display").value || "SRV-TEMP";
+  const numRows = container.querySelectorAll(".product-item-row").length + 1;
+  const idSertifikat = data ? data.idSertifikat : `${idLayanan}-${("0" + numRows).slice(-2)}`;
+  
+  // Product options (dari Validasi Data: JenisProduk)
+  let productOpts = `<option value="">-- Pilih Produk --</option>`;
+  (state.masterData.JenisProduk || []).forEach(p => {
+    productOpts += `<option value="${p.name}">${p.name}</option>`;
   });
   
-  // Composition checkboxes (Jenis Logam & Persentase)
-  let compositionCheckboxes = "";
-  (state.masterData.JenisLogam || []).forEach((m, idx) => {
-    compositionCheckboxes += `
-      <label class="check-item">
-        <input type="checkbox" class="row-comp-check" value="${m.name} (${m.value}%)" onchange="calculateRowCost(${productRowCounter})">
-        ${m.name}
-      </label>
+  // Generate list bahan logam dari masterData.JenisLogam
+  const baseMaterials = [];
+  (state.masterData.JenisLogam || []).forEach(m => {
+    const nameOnly = m.name.split(" ")[0]; // ambil kata depan logam, misal "Emas Murni" -> "Emas"
+    if (nameOnly && !baseMaterials.includes(nameOnly)) {
+      baseMaterials.push(nameOnly);
+    }
+  });
+  if (baseMaterials.length === 0) {
+    baseMaterials.push("Emas", "Perak", "Palladium", "Tembaga", "Zinc");
+  }
+  
+  let compositionRows = "";
+  baseMaterials.forEach(mat => {
+    compositionRows += `
+      <div class="comp-item-row" style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+        <input type="checkbox" class="row-comp-check" value="${mat}" onchange="toggleCompInput(this, ${productRowCounter})">
+        <span style="font-size:11px; width:70px;">${mat}</span>
+        <input type="number" class="row-comp-val" placeholder="%" style="width:50px; padding:2px 4px; font-size:10px; display:none;" min="0" max="100" step="0.1" oninput="updateCompositionString(${productRowCounter})">
+      </div>
     `;
   });
   
   rowDiv.innerHTML = `
-    <!-- Col 1: Detail Logam -->
+    <!-- Col 1: Detail Produk -->
     <div class="input-group">
-      <label>Nama Logam &amp; Berat</label>
-      <select class="row-metal" required onchange="calculateRowCost(${productRowCounter})">
-        ${metalOpts}
+      <label>Nama Produk &amp; Berat</label>
+      <select class="row-product" required onchange="calculateRowCost(${productRowCounter})">
+        ${productOpts}
       </select>
       <input type="number" step="0.01" class="row-weight" placeholder="Berat (gr)" required style="margin-top:6px;" oninput="calculateRowCost(${productRowCounter})">
     </div>
     
-    <!-- Col 2: Komposisi (Multiple Select) -->
+    <!-- Col 2: Komposisi (Multiple Select & Manual %) -->
     <div class="input-group">
       <label>Komposisi Kadar</label>
-      <div class="checklist-container-row">
-        ${compositionCheckboxes}
+      <div class="checklist-container-row" style="max-height:100px;">
+        ${compositionRows}
       </div>
+      <input type="hidden" class="row-composition-compiled" id="composition-compiled-${productRowCounter}" value="">
     </div>
     
     <!-- Col 3: Upload Files & Preview -->
@@ -963,10 +1035,10 @@ function addProductRow(data = null) {
     <input type="hidden" class="row-foto-mime" id="foto-mime-${productRowCounter}">
     <input type="hidden" class="row-sert-base64" id="sert-base64-${productRowCounter}">
     <input type="hidden" class="row-sert-mime" id="sert-mime-${productRowCounter}">
-    <input type="hidden" class="row-id-sertifikat" id="sertifikat-id-${productRowCounter}">
+    <input type="hidden" class="row-id-sertifikat" id="sertifikat-id-${productRowCounter}" value="${idSertifikat}">
     
     <div class="row-footer-calculator">
-      <span style="font-size: 11px; color:#86868b;" id="cert-id-display-${productRowCounter}">ID Sertifikat: Auto-generated</span>
+      <span style="font-size: 11px; color:#86868b;" id="cert-id-display-${productRowCounter}">ID Sertifikat: ${idSertifikat}</span>
     </div>
   `;
   
@@ -974,24 +1046,38 @@ function addProductRow(data = null) {
   
   // Jika parameter data dikirim (untuk Edit Mode)
   if (data) {
-    rowDiv.querySelector(".row-metal").value = data.namaLogam;
+    rowDiv.querySelector(".row-product").value = data.namaLogam;
     rowDiv.querySelector(".row-weight").value = data.berat;
     rowDiv.querySelector(".row-cetak-check").checked = data.cetakChecklist;
     document.getElementById(`sertifikat-id-${productRowCounter}`).value = data.idSertifikat;
     document.getElementById(`cert-id-display-${productRowCounter}`).textContent = `ID Sertifikat: ${data.idSertifikat}`;
     
-    // Set checklist komposisi
+    // Set checklist komposisi & persentase input
     const compParts = data.komposisi.split(" + ");
-    rowDiv.querySelectorAll(".row-comp-check").forEach(chk => {
-      if (compParts.includes(chk.value)) {
-        chk.checked = true;
+    compParts.forEach(part => {
+      const match = part.match(/^([a-zA-Z\s]+)\(?([\d\.]+)%\)?/);
+      if (match) {
+        const material = match[1].trim();
+        const percent = match[2];
+        
+        rowDiv.querySelectorAll(".row-comp-check").forEach(chk => {
+          if (chk.value === material) {
+            chk.checked = true;
+            const inputVal = chk.parentElement.querySelector(".row-comp-val");
+            if (inputVal) {
+              inputVal.style.display = "inline-block";
+              inputVal.value = percent;
+            }
+          }
+        });
       }
     });
+    
+    document.getElementById(`composition-compiled-${productRowCounter}`).value = data.komposisi;
     
     // Render file preview jika url lama ada
     if (data.fotoUrl) {
       document.getElementById(`preview-foto-${productRowCounter}`).innerHTML = `<img src="${data.fotoUrl}" class="preview-thumbnail" onclick="window.open('${data.fotoUrl}')">`;
-      // simpan url lama di form agar tidak ter-overwrite
       rowDiv.dataset.fotoUrl = data.fotoUrl;
     }
     if (data.sertifikatUrl) {
@@ -1072,7 +1158,7 @@ function calculateGrandTotal() {
 // Save Service Transaction Form
 async function saveServiceTransaction() {
   const isEdit = !!document.getElementById("layanan-edit-id").value;
-  const idLayanan = document.getElementById("layanan-edit-id").value;
+  const idLayanan = document.getElementById("layanan-id-display").value;
   const tanggal = document.getElementById("layanan-tanggal").value;
   const idPelanggan = document.getElementById("layanan-pelanggan-select").value;
   const metodePembayaran = document.getElementById("layanan-metode-bayar").value;
@@ -1096,16 +1182,11 @@ async function saveServiceTransaction() {
   
   rows.forEach(row => {
     const rowId = row.id.split("-").pop();
-    const namaLogam = row.querySelector(".row-metal").value;
+    const namaLogam = row.querySelector(".row-product").value;
     const berat = parseFloat(row.querySelector(".row-weight").value) || 0;
     const cetakChecklist = row.querySelector(".row-cetak-check").checked;
     const subtotal = parseFloat(document.getElementById(`cost-display-${rowId}`).dataset.value) || 0;
-    
-    // Mengumpulkan checkbox komposisi terchecklist
-    const selectedCompositions = [];
-    row.querySelectorAll(".row-comp-check:checked").forEach(chk => {
-      selectedCompositions.push(chk.value);
-    });
+    const komposisi = document.getElementById(`composition-compiled-${rowId}`).value;
     
     if (!namaLogam || berat <= 0) {
       isRowValid = false;
@@ -1116,7 +1197,7 @@ async function saveServiceTransaction() {
       idSertifikat: document.getElementById(`sertifikat-id-${rowId}`).value,
       namaLogam,
       berat,
-      komposisi: selectedCompositions.join(" + ") || "Campuran Bebas",
+      komposisi: komposisi || "Campuran Bebas",
       fotoUrl: row.dataset.fotoUrl || "",
       fotoBase64: document.getElementById(`foto-base64-${rowId}`).value,
       fotoMime: document.getElementById(`foto-mime-${rowId}`).value,
@@ -1129,7 +1210,7 @@ async function saveServiceTransaction() {
   });
   
   if (!isRowValid) {
-    showToast("Isi Nama Logam dan Berat secara valid di setiap baris!");
+    showToast("Isi Nama Produk dan Berat secara valid di setiap baris!");
     return;
   }
   
@@ -1485,6 +1566,10 @@ function setupEventListeners() {
       const now = new Date();
       document.getElementById("layanan-tanggal").value = now.toISOString().split("T")[0];
       
+      // Auto-generate ID Layanan dan tampilkan di form
+      const nextId = generateNextServiceId();
+      document.getElementById("layanan-id-display").value = nextId;
+      
       // Tambah baris awal
       addProductRow();
     }
@@ -1580,6 +1665,14 @@ function setupEventListeners() {
 async function initApp() {
   // 1. Tampilkan tanggal realtime Indonesia di content header
   document.getElementById("current-date-indo").textContent = getIndonesianRealtimeString();
+  
+  // Set default filter tanggal riwayat (Bulan berjalan)
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  document.getElementById("riwayat-start-date").value = `${year}-${month}-01`;
+  const lastDay = new Date(year, now.getMonth() + 1, 0).getDate();
+  document.getElementById("riwayat-end-date").value = `${year}-${month}-${String(lastDay).padStart(2, "0")}`;
   
   // 2. Inisialisasi IndexedDB
   await db.init();
