@@ -357,7 +357,7 @@ async function pullAllData() {
       await db.putItem("transactions", trx);
     }
     
-    renderAllViews();
+    await renderAllViews();
     updateOnlineStatus();
   } catch (err) {
     console.error("Gagal sinkron data otomatis:", err);
@@ -385,13 +385,13 @@ async function loadFromLocalCache() {
   state.customers = await db.getAll("customers");
   state.transactions = await db.getAll("transactions");
   
-  renderAllViews();
+  await renderAllViews();
 }
 
-function renderAllViews() {
+async function renderAllViews() {
   renderDashboard();
   renderCustomersList();
-  renderTransactionsHistory();
+  await renderTransactionsHistory();
   renderMasterValidationLists();
   populateDropdownSelectors();
 }
@@ -494,18 +494,22 @@ function drawDashboardChart(transactions, startStr, endStr) {
   // Buat objek mapping total pendapatan per tanggal
   const dateTotals = {};
   
-  // Buat array list tanggal dari startStr ke endStr
-  const start = new Date(startStr);
-  const end = new Date(endStr);
+  // Buat array list tanggal dari startStr ke endStr secara timezone-safe
+  const startParts = startStr.split("-");
+  const start = new Date(parseInt(startParts[0]), parseInt(startParts[1]) - 1, parseInt(startParts[2]));
+  const endParts = endStr.split("-");
+  const end = new Date(parseInt(endParts[0]), parseInt(endParts[1]) - 1, parseInt(endParts[2]));
   const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
   
   // Batasi agar label grafik tidak terlalu menumpuk
-  const showLabelsStep = Math.ceil(daysDiff / 10);
+  const showLabelsStep = Math.ceil(daysDiff / 10) || 1;
   
   for (let i = 0; i < daysDiff; i++) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    const dateStr = d.toISOString().split("T")[0];
+    const d = new Date(parseInt(startParts[0]), parseInt(startParts[1]) - 1, parseInt(startParts[2]) + i);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const date = String(d.getDate()).padStart(2, "0");
+    const dateStr = `${year}-${month}-${date}`;
     dateTotals[dateStr] = 0;
   }
   
@@ -1361,7 +1365,7 @@ async function queueDeleteOffline(id) {
 // ==========================================
 // 5. RIWAYAT LAYANAN & PDF ACTIONS
 // ==========================================
-function renderTransactionsHistory() {
+async function renderTransactionsHistory() {
   const tbody = document.getElementById("body-riwayat-layanan");
   tbody.innerHTML = "";
   
@@ -1369,7 +1373,24 @@ function renderTransactionsHistory() {
   const endFilter = document.getElementById("riwayat-end-date").value;
   const searchQuery = document.getElementById("riwayat-search-query").value.toLowerCase();
   
-  const filtered = state.transactions.filter(t => {
+  // Ambil transaksi tertunda dari sync_queue untuk dirender instan
+  const queue = await db.getAll("sync_queue");
+  const pendingTrxs = [];
+  queue.forEach(q => {
+    if (q.action === "saveTransaction" && q.data) {
+      pendingTrxs.push(q.data);
+    }
+  });
+  
+  // Gabungkan dengan transaksi synced
+  const allTrxs = [...pendingTrxs];
+  state.transactions.forEach(t => {
+    if (!allTrxs.some(pt => pt.id === t.id)) {
+      allTrxs.push(t);
+    }
+  });
+  
+  const filtered = allTrxs.filter(t => {
     if (!t || !t.id) return false; // Filter out empty or corrupt transactions
     const isDateMatch = (!startFilter || t.tanggal >= startFilter) && (!endFilter || t.tanggal <= endFilter);
     const isSearchMatch = !searchQuery || 
@@ -1390,7 +1411,8 @@ function renderTransactionsHistory() {
     
     // Status sinkronisasi badge
     let syncBadge = `<span class="badge badge-success">Synced</span>`;
-    if (t.id && t.id.indexOf("TEMP") > -1) {
+    const isPending = t.id.indexOf("TEMP") > -1 || queue.some(q => q.action === "saveTransaction" && q.data.id === t.id);
+    if (isPending) {
       syncBadge = `<span class="badge badge-warning">Local</span>`;
     }
     
