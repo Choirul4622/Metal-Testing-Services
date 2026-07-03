@@ -1370,10 +1370,11 @@ function renderTransactionsHistory() {
   const searchQuery = document.getElementById("riwayat-search-query").value.toLowerCase();
   
   const filtered = state.transactions.filter(t => {
+    if (!t || !t.id) return false; // Filter out empty or corrupt transactions
     const isDateMatch = (!startFilter || t.tanggal >= startFilter) && (!endFilter || t.tanggal <= endFilter);
     const isSearchMatch = !searchQuery || 
-                          t.id.toLowerCase().includes(searchQuery) || 
-                          t.namaPelanggan.toLowerCase().includes(searchQuery);
+                          (t.id && t.id.toLowerCase().includes(searchQuery)) || 
+                          (t.namaPelanggan && t.namaPelanggan.toLowerCase().includes(searchQuery));
     return isDateMatch && isSearchMatch;
   });
   
@@ -1389,7 +1390,7 @@ function renderTransactionsHistory() {
     
     // Status sinkronisasi badge
     let syncBadge = `<span class="badge badge-success">Synced</span>`;
-    if (t.id.indexOf("TEMP") > -1) {
+    if (t.id && t.id.indexOf("TEMP") > -1) {
       syncBadge = `<span class="badge badge-warning">Local</span>`;
     }
     
@@ -1676,7 +1677,7 @@ async function initApp() {
   
   // 2. Inisialisasi IndexedDB
   await db.init();
-   
+  
   // 3. Set router tab SPA
   initRouter();
   
