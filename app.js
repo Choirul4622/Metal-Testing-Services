@@ -351,13 +351,13 @@ async function pullAllData() {
     document.getElementById("sync-text").textContent = "Mengambil data dari Sheets...";
     
     // 1. Ambil Master Data
-    const resMaster = await callGASApi("getMasterData").catch(e => { console.error(e); return { data: {} }; });
+    const resMaster = await callGASApi("getMasterData");
     
     // 2. Ambil Pelanggan
-    const resCust = await callGASApi("getCustomers").catch(e => { console.error(e); return { data: [] }; });
+    const resCust = await callGASApi("getCustomers");
     
     // 3. Ambil Transaksi Pelayanan
-    const resTrx = await callGASApi("getTransactions", { startDate: "", endDate: "" }).catch(e => { console.error(e); return { data: [] }; });
+    const resTrx = await callGASApi("getTransactions", { startDate: "", endDate: "" });
     
     // 1. Ambil Master Data
     state.masterData = resMaster.data || {};
