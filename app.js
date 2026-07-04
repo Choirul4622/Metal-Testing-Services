@@ -1728,14 +1728,6 @@ async function initApp() {
   // 1. Tampilkan tanggal realtime Indonesia di content header
   document.getElementById("current-date-indo").textContent = getIndonesianRealtimeString();
   
-  // Set default filter tanggal riwayat (Bulan berjalan)
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  document.getElementById("riwayat-start-date").value = `${year}-${month}-01`;
-  const lastDay = new Date(year, now.getMonth() + 1, 0).getDate();
-  document.getElementById("riwayat-end-date").value = `${year}-${month}-${String(lastDay).padStart(2, "0")}`;
-  
   // 2. Inisialisasi IndexedDB
   await db.init();
   
