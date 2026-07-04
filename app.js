@@ -358,6 +358,7 @@ async function pullAllData() {
     
     // 3. Ambil Transaksi Pelayanan
     const resTrx = await callGASApi("getTransactions", { startDate: "", endDate: "" });
+    console.log("[Debug API] resTrx:", resTrx);
     
     // 1. Ambil Master Data
     state.masterData = resMaster.data || {};
