@@ -246,24 +246,19 @@ function normalizeDateStr(dateVal) {
   if (!dateVal) return "";
   const s = String(dateVal).trim();
   if (!s) return "";
-  // Jika sudah format ISO yyyy-MM-dd atau dengan T (timestamp)
+  
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
-  // Format dd/mm/yyyy atau dd/mm/yy
-  const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-  if (slashMatch) {
-    const d = slashMatch[1].padStart(2, "0");
-    const m = slashMatch[2].padStart(2, "0");
-    let y = slashMatch[3];
+  
+  // Format dd/mm/yyyy, dd-mm-yyyy, dd/mm/yy
+  const match = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  if (match) {
+    const d = match[1].padStart(2, "0");
+    const m = match[2].padStart(2, "0");
+    let y = match[3];
     if (y.length === 2) y = "20" + y;
     return `${y}-${m}-${d}`;
   }
-  // Format dd-mm-yyyy (beda dari ISO yyyy-MM-dd karena bulan tidak 0-12 jika hari > 12)
-  const dashMatch = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
-  if (dashMatch) {
-    const d = dashMatch[1].padStart(2, "0");
-    const m = dashMatch[2].padStart(2, "0");
-    return `${dashMatch[3]}-${m}-${d}`;
-  }
+  
   // Fallback: parse dengan Date JS
   try {
     const parsed = new Date(s);
@@ -300,6 +295,19 @@ function fileToBase64(file) {
     reader.onload = () => resolve(reader.result);
     reader.onerror = (error) => reject(error);
   });
+}
+
+// Debounce Utility
+function debounce(func, wait) {
+  let timeout;
+  return function(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
 }
 
 // Toast Notification
@@ -342,49 +350,58 @@ async function pullAllData() {
   try {
     document.getElementById("sync-text").textContent = "Mengambil data dari Sheets...";
     
+    // Ambil data secara paralel
+    const [resMaster, resCust, resTrx] = await Promise.all([
+      callGASApi("getMasterData").catch(e => { console.error(e); return { data: {} }; }),
+      callGASApi("getCustomers").catch(e => { console.error(e); return { data: [] }; }),
+      callGASApi("getTransactions", { startDate: "", endDate: "" }).catch(e => { console.error(e); return { data: [] }; })
+    ]);
+    
     // 1. Ambil Master Data
-    const resMaster = await callGASApi("getMasterData");
     state.masterData = resMaster.data || {};
     await db.clearStore("master_data");
-    // Masukkan ke IndexedDB
+    const masterPromises = [];
     for (const cat in state.masterData) {
       if (Array.isArray(state.masterData[cat])) {
         for (const item of state.masterData[cat]) {
-          await db.putItem("master_data", { category: cat, name: item.name, value: item.value });
+          masterPromises.push(db.putItem("master_data", { category: cat, name: item.name, value: item.value }));
         }
       }
     }
+    await Promise.all(masterPromises);
     
     // 2. Ambil Pelanggan
-    const resCust = await callGASApi("getCustomers");
     state.customers = Array.isArray(resCust.data) ? resCust.data : [];
     await db.clearStore("customers");
-    for (const cust of state.customers) {
+    const custPromises = state.customers.map(cust => {
       if (cust && cust.id !== undefined && cust.id !== null) {
         cust.id = String(cust.id);
       }
-      await db.putItem("customers", cust);
-    }
+      return db.putItem("customers", cust);
+    });
+    await Promise.all(custPromises);
     
     // 3. Ambil Transaksi Pelayanan
-    const resTrx = await callGASApi("getTransactions", { startDate: "", endDate: "" });
     state.transactions = Array.isArray(resTrx.data) ? resTrx.data : [];
-    // Normalisasi field tanggal dari server (bisa berupa ISO string atau format lain)
-    state.transactions.forEach(trx => {
-      if (trx && trx.tanggal) {
-        trx.tanggal = normalizeDateStr(trx.tanggal);
-      }
-    });
+    console.info(`[Sync] Berhasil ambil ${state.transactions.length} transaksi dari server.`);
+    
     await db.clearStore("transactions");
-    for (const trx of state.transactions) {
-      if (trx && trx.id !== undefined && trx.id !== null) {
-        trx.id = String(trx.id);
+    const trxPromises = state.transactions.map(trx => {
+      if (trx) {
+        if (trx.id !== undefined && trx.id !== null) trx.id = String(trx.id);
+        if (trx.tanggal) trx.tanggal = normalizeDateStr(trx.tanggal);
+        return db.putItem("transactions", trx);
       }
-      await db.putItem("transactions", trx);
-    }
+      return Promise.resolve();
+    });
+    await Promise.all(trxPromises);
     
     await renderAllViews();
     updateOnlineStatus();
+    
+    if (state.transactions.length === 0) {
+      console.warn("[Sync] Server mengembalikan 0 transaksi. Periksa data di Google Sheets.");
+    }
   } catch (err) {
     console.error("Gagal sinkron data otomatis:", err);
     showToast("Gagal mengambil data dari Google Sheets. Menggunakan data lokal.");
@@ -737,6 +754,7 @@ function renderCustomersList() {
     return;
   }
   
+  const fragment = document.createDocumentFragment();
   filtered.forEach(c => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -747,8 +765,9 @@ function renderCustomersList() {
         <button class="btn btn-secondary btn-sm" onclick="editCustomer('${c.id}')">Edit</button>
       </td>
     `;
-    tbody.appendChild(tr);
+    fragment.appendChild(tr);
   });
+  tbody.appendChild(fragment);
 }
 
 async function saveCustomerForm() {
@@ -828,6 +847,7 @@ function renderMasterValidationLists() {
     return;
   }
   
+  const fragment = document.createDocumentFragment();
   list.forEach((item, index) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -837,8 +857,9 @@ function renderMasterValidationLists() {
         <button class="btn btn-danger btn-sm" onclick="deleteMasterOption('${currentCat}', ${index})">Hapus</button>
       </td>
     `;
-    tbody.appendChild(tr);
+    fragment.appendChild(tr);
   });
+  tbody.appendChild(fragment);
 }
 
 async function addMasterOption() {
@@ -1472,12 +1493,13 @@ async function renderTransactionsHistory() {
   
   const emptyState = document.getElementById("empty-state-riwayat");
   if (filtered.length === 0) {
-    tbody.innerHTML = ""; // Pastikan tbody bersih saat empty state ditampilkan
+    tbody.innerHTML = ""; 
     emptyState.style.display = "flex";
     return;
   }
   emptyState.style.display = "none";
   
+  const fragment = document.createDocumentFragment();
   filtered.forEach(t => {
     const tr = document.createElement("tr");
     
@@ -1512,8 +1534,9 @@ async function renderTransactionsHistory() {
         </div>
       </td>
     `;
-    tbody.appendChild(tr);
+    fragment.appendChild(tr);
   });
+  tbody.appendChild(fragment);
 }
 
 // Generate Invoice PDF
@@ -1626,8 +1649,9 @@ function setupEventListeners() {
   });
   document.getElementById("btn-reset-pelanggan").addEventListener("click", resetCustomerForm);
   
-  // Search customer input
-  document.getElementById("search-customer").addEventListener("input", renderCustomersList);
+  // Search customer input (Debounced)
+  const debouncedRenderCustomersList = debounce(renderCustomersList, 300);
+  document.getElementById("search-customer").addEventListener("input", debouncedRenderCustomersList);
   
   // Master data category buttons
   document.querySelectorAll(".val-tab-btn").forEach(btn => {
@@ -1737,8 +1761,9 @@ function setupEventListeners() {
       `<img src="${base64}" class="preview-thumbnail">`;
   });
   
-  // Riwayat search and date filter
-  document.getElementById("riwayat-search-query").addEventListener("input", renderTransactionsHistory);
+  // Riwayat search and date filter (Debounced for search text)
+  const debouncedRenderTransactionsHistory = debounce(renderTransactionsHistory, 300);
+  document.getElementById("riwayat-search-query").addEventListener("input", debouncedRenderTransactionsHistory);
   document.getElementById("riwayat-start-date").addEventListener("input", renderTransactionsHistory);
   document.getElementById("riwayat-end-date").addEventListener("input", renderTransactionsHistory);
   document.getElementById("btn-reset-filter-riwayat").addEventListener("click", () => {
@@ -1812,3 +1837,49 @@ function registerServiceWorker() {
 
 // Jalankan sistem
 window.onload = initApp;
+
+// ==========================================
+// DEBUG HELPER (panggil dari Console browser)
+// ==========================================
+window.debugApp = async function() {
+  console.group("=== DEBUG APP STATUS ===");
+  console.log("Online:", navigator.onLine);
+  console.log("GAS URL:", GAS_API_URL);
+  console.log("Jumlah transaksi di state:", state.transactions.length);
+  console.log("Transaksi[0]:", state.transactions[0] || "kosong");
+  console.log("Jumlah pelanggan di state:", state.customers.length);
+  
+  // Cek IndexedDB
+  try {
+    const trxIDB = await db.getAll("transactions");
+    console.log("Jumlah transaksi di IndexedDB:", trxIDB.length);
+    console.log("IndexedDB[0]:", trxIDB[0] || "kosong");
+  } catch(e) {
+    console.error("Error baca IndexedDB:", e);
+  }
+  
+  // Coba langsung call API getTransactions
+  if (navigator.onLine) {
+    try {
+      console.log("Mencoba call API getTransactions...");
+      const res = await callGASApi("getTransactions", { startDate: "", endDate: "" });
+      console.log("Respons API getTransactions:", res);
+      console.log("Jumlah data dari server:", Array.isArray(res.data) ? res.data.length : "bukan array");
+      if (Array.isArray(res.data) && res.data.length > 0) {
+        console.log("Data pertama dari server:", res.data[0]);
+      }
+    } catch(e) {
+      console.error("GAGAL call API getTransactions:", e.message);
+    }
+  } else {
+    console.warn("Offline — tidak bisa test API");
+  }
+  
+  // Cek elemen DOM
+  const tbody = document.getElementById("body-riwayat-layanan");
+  const emptyState = document.getElementById("empty-state-riwayat");
+  console.log("tbody innerHTML length:", tbody ? tbody.innerHTML.trim().length : "NULL");
+  console.log("empty-state display:", emptyState ? emptyState.style.display : "NULL");
+  console.groupEnd();
+};
+console.info("💡 Tip: Ketik debugApp() di Console untuk diagnosa lengkap");
