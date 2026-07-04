@@ -241,6 +241,42 @@ function formatTanggalIndo(dateStr) {
   return `${hari} ${bulanIndo[bulan]} ${tahun}`;
 }
 
+// Normalisasi string tanggal ke format yyyy-MM-dd (aman untuk berbagai format dari server/Sheets)
+function normalizeDateStr(dateVal) {
+  if (!dateVal) return "";
+  const s = String(dateVal).trim();
+  if (!s) return "";
+  // Jika sudah format ISO yyyy-MM-dd atau dengan T (timestamp)
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
+  // Format dd/mm/yyyy atau dd/mm/yy
+  const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (slashMatch) {
+    const d = slashMatch[1].padStart(2, "0");
+    const m = slashMatch[2].padStart(2, "0");
+    let y = slashMatch[3];
+    if (y.length === 2) y = "20" + y;
+    return `${y}-${m}-${d}`;
+  }
+  // Format dd-mm-yyyy (beda dari ISO yyyy-MM-dd karena bulan tidak 0-12 jika hari > 12)
+  const dashMatch = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+  if (dashMatch) {
+    const d = dashMatch[1].padStart(2, "0");
+    const m = dashMatch[2].padStart(2, "0");
+    return `${dashMatch[3]}-${m}-${d}`;
+  }
+  // Fallback: parse dengan Date JS
+  try {
+    const parsed = new Date(s);
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear();
+      const mo = String(parsed.getMonth() + 1).padStart(2, "0");
+      const da = String(parsed.getDate()).padStart(2, "0");
+      return `${y}-${mo}-${da}`;
+    }
+  } catch(e) {}
+  return s;
+}
+
 function getDayNameIndo(dateStr) {
   const date = new Date(dateStr);
   const hariIndo = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
@@ -332,9 +368,13 @@ async function pullAllData() {
     
     // 3. Ambil Transaksi Pelayanan
     const resTrx = await callGASApi("getTransactions", { startDate: "", endDate: "" });
-    console.log("DEBUG: Data transaksi mentah dari server:", resTrx);
     state.transactions = Array.isArray(resTrx.data) ? resTrx.data : [];
-    console.log("DEBUG: Jumlah transaksi disimpan di state:", state.transactions.length);
+    // Normalisasi field tanggal dari server (bisa berupa ISO string atau format lain)
+    state.transactions.forEach(trx => {
+      if (trx && trx.tanggal) {
+        trx.tanggal = normalizeDateStr(trx.tanggal);
+      }
+    });
     await db.clearStore("transactions");
     for (const trx of state.transactions) {
       if (trx && trx.id !== undefined && trx.id !== null) {
@@ -379,6 +419,9 @@ async function loadFromLocalCache() {
   state.transactions.forEach(trx => {
     if (trx && trx.id !== undefined && trx.id !== null) {
       trx.id = String(trx.id);
+    }
+    if (trx && trx.tanggal) {
+      trx.tanggal = normalizeDateStr(trx.tanggal);
     }
   });
   
@@ -1231,7 +1274,7 @@ async function saveServiceTransaction() {
   const buktiBayarUrl = document.getElementById("bukti-bayar-preview").dataset.url || "";
   
   const trxData = {
-    id: idLayanan,
+    id: isEdit ? idLayanan : "",  // Kosongkan id untuk transaksi baru agar server generate ID baru
     tanggal,
     idPelanggan,
     namaPelanggan,
@@ -1408,7 +1451,6 @@ async function renderTransactionsHistory() {
     }
   });
   
-  console.log("DEBUG: Semua transaksi yang digabungkan (allTrxs):", allTrxs);
   const filtered = allTrxs.filter(t => {
     if (!t || t.id === undefined || t.id === null) return false; // Filter out empty or corrupt transactions
     const tIdStr = String(t.id).toLowerCase();
@@ -1428,10 +1470,9 @@ async function renderTransactionsHistory() {
     return bId.localeCompare(aId);
   });
   
-  console.log("DEBUG: Transaksi yang lolos filter (filtered):", filtered);
-  
   const emptyState = document.getElementById("empty-state-riwayat");
   if (filtered.length === 0) {
+    tbody.innerHTML = ""; // Pastikan tbody bersih saat empty state ditampilkan
     emptyState.style.display = "flex";
     return;
   }
@@ -1456,10 +1497,10 @@ async function renderTransactionsHistory() {
     tr.innerHTML = `
       <td><strong>${t.id}</strong></td>
       <td>${formatTanggalIndo(t.tanggal)}</td>
-      <td>${t.namaPelanggan}</td>
+      <td>${t.namaPelanggan || "-"}</td>
       <td>${itemsHtml}</td>
       <td style="font-weight:700;">${formatRupiah(t.totalBiaya)}</td>
-      <td><span class="badge badge-info">${t.metodePembayaran}</span></td>
+      <td><span class="badge badge-info">${t.metodePembayaran || "-"}</span></td>
       <td>${syncBadge}</td>
       <td>
         <div class="table-actions-cell">
