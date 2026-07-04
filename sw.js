@@ -8,7 +8,8 @@ const ASSETS_TO_CACHE = [
   "./",
   "./index.html",
   "./style.css",
-  "./app.js"
+  "./app.js",
+  "./manifest.json"
 ];
 
 // Install Event - Cache assets

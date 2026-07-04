@@ -114,34 +114,6 @@ const db = new IndexedDBManager();
 // ==========================================
 // API CLIENT (KOMUNIKASI DENGAN GAS)
 // ==========================================
-async function callGAS(action, data = null) {
-  if (!navigator.onLine) {
-    throw new Error("offline");
-  }
-  
-  try {
-    const response = await fetch(GAS_API_URL, {
-      method: "POST",
-      mode: "no-cors", // Digunakan karena Apps Script redirect, namun kita perlu penanganan data balik.
-      // Catatan: Jika ingin membaca return response json secara full di browser modern tanpa CORS block di GAS,
-      // kita harus deploy GAS dengan response header CORS atau gunakan redirect handling.
-      // Di sini kita gunakan Fetch POST standard dengan JSON payload.
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ action, data })
-    });
-    
-    // Karena mode no-cors, response.json() tidak bisa dibaca. Namun, untuk integrasi GAS web app,
-    // opsi terbaik adalah membiarkan GAS mengembalikan output yang diparsing.
-    // Untuk memastikan data terkirim, kita berasumsi bahwa fetch berhasil jika statusnya ok.
-    // Jika user mengaktifkan CORS penuh di GAS, kita bisa membaca output JSON.
-    // Berikut implementasi fetch dengan pembacaan respons.
-  } catch (err) {
-    console.error("GAS API Error:", err);
-    throw err;
-  }
-}
 
 // Implementasi Fetch Client Sebenarnya (Membaca JSON dari GAS)
 async function callGASApi(action, data = null) {
@@ -152,6 +124,10 @@ async function callGASApi(action, data = null) {
   try {
     const response = await fetch(GAS_API_URL, {
       method: "POST",
+      redirect: "follow", // IKUTI redirect GAS tanpa gagal (Google Apps Script redirect otomatis)
+      headers: {
+        "Content-Type": "text/plain;charset=utf-8" // Hindari preflight CORS OPTIONS request
+      },
       body: JSON.stringify({ action, data })
     });
     
@@ -332,28 +308,36 @@ async function pullAllData() {
     
     // 1. Ambil Master Data
     const resMaster = await callGASApi("getMasterData");
-    state.masterData = resMaster.data;
+    state.masterData = resMaster.data || {};
     await db.clearStore("master_data");
     // Masukkan ke IndexedDB
     for (const cat in state.masterData) {
-      for (const item of state.masterData[cat]) {
-        await db.putItem("master_data", { category: cat, name: item.name, value: item.value });
+      if (Array.isArray(state.masterData[cat])) {
+        for (const item of state.masterData[cat]) {
+          await db.putItem("master_data", { category: cat, name: item.name, value: item.value });
+        }
       }
     }
     
     // 2. Ambil Pelanggan
     const resCust = await callGASApi("getCustomers");
-    state.customers = resCust.data;
+    state.customers = Array.isArray(resCust.data) ? resCust.data : [];
     await db.clearStore("customers");
     for (const cust of state.customers) {
+      if (cust && cust.id !== undefined && cust.id !== null) {
+        cust.id = String(cust.id);
+      }
       await db.putItem("customers", cust);
     }
     
     // 3. Ambil Transaksi Pelayanan
     const resTrx = await callGASApi("getTransactions", { startDate: "", endDate: "" });
-    state.transactions = resTrx.data;
+    state.transactions = Array.isArray(resTrx.data) ? resTrx.data : [];
     await db.clearStore("transactions");
     for (const trx of state.transactions) {
+      if (trx && trx.id !== undefined && trx.id !== null) {
+        trx.id = String(trx.id);
+      }
       await db.putItem("transactions", trx);
     }
     
@@ -382,8 +366,19 @@ async function loadFromLocalCache() {
     }
   });
   
-  state.customers = await db.getAll("customers");
-  state.transactions = await db.getAll("transactions");
+  state.customers = (await db.getAll("customers")) || [];
+  state.customers.forEach(cust => {
+    if (cust && cust.id !== undefined && cust.id !== null) {
+      cust.id = String(cust.id);
+    }
+  });
+  
+  state.transactions = (await db.getAll("transactions")) || [];
+  state.transactions.forEach(trx => {
+    if (trx && trx.id !== undefined && trx.id !== null) {
+      trx.id = String(trx.id);
+    }
+  });
   
   await renderAllViews();
 }
@@ -686,7 +681,10 @@ function renderCustomersList() {
   const query = document.getElementById("search-customer").value.toLowerCase();
   
   const filtered = state.customers.filter(c => {
-    return c.name.toLowerCase().includes(query) || c.phone.includes(query);
+    if (!c) return false;
+    const nameStr = c.name ? String(c.name).toLowerCase() : "";
+    const phoneStr = c.phone ? String(c.phone) : "";
+    return nameStr.includes(query) || phoneStr.includes(query);
   });
   
   if (filtered.length === 0) {
@@ -751,7 +749,7 @@ async function saveCustomerForm() {
 }
 
 function editCustomer(id) {
-  const customer = state.customers.find(c => c.id === id);
+  const customer = state.customers.find(c => String(c.id) === String(id));
   if (!customer) return;
   
   document.getElementById("form-pelanggan-title").textContent = "Edit Data Pelanggan";
@@ -916,7 +914,10 @@ function generateNextServiceId() {
       }
     }
   });
-  return `${prefix}-${maxSeq + 1}`;
+  
+  // Tambahkan timestamp micro-sek untuk menghindari konflik ID saat rapid creation
+  const microSuffix = Date.now().toString().slice(-4);
+  return `${prefix}-${maxSeq + 1}${microSuffix}`;
 }
 
 // Toggle input persentase komposisi
@@ -1172,7 +1173,7 @@ async function saveServiceTransaction() {
     return;
   }
   
-  const customer = state.customers.find(c => c.id === idPelanggan);
+  const customer = state.customers.find(c => String(c.id) === String(idPelanggan));
   const namaPelanggan = customer ? customer.name : "-";
   
   const rows = document.querySelectorAll(".product-item-row");
@@ -1268,6 +1269,18 @@ async function saveServiceTransaction() {
   
   // Kembali ke riwayat & reload
   document.getElementById("form-transaksi-layanan").reset();
+  document.getElementById("layanan-edit-id").value = "";
+  document.getElementById("layanan-id-display").value = "[Otomatis]";
+  document.getElementById("product-rows-container").innerHTML = "";
+  document.getElementById("layanan-grand-total").textContent = "Rp 0";
+  document.getElementById("layanan-grand-total").dataset.value = "0";
+  document.getElementById("bukti-bayar-preview").innerHTML = "";
+  delete document.getElementById("bukti-bayar-preview").dataset.base64;
+  delete document.getElementById("bukti-bayar-preview").dataset.mime;
+  delete document.getElementById("bukti-bayar-preview").dataset.url;
+  document.getElementById("bukti-bayar-upload-group").style.display = "none";
+  productRowCounter = 0;
+  
   document.getElementById("sub-panel-layanan-form").style.display = "none";
   document.getElementById("sub-panel-layanan-riwayat").style.display = "block";
   document.getElementById("btn-seg-riwayat").classList.add("active");
@@ -1291,7 +1304,7 @@ async function saveTransactionOffline(trxData, isEdit) {
 
 // Edit Transaksi
 function editTransaction(id) {
-  const trx = state.transactions.find(t => t.id === id);
+  const trx = state.transactions.find(t => String(t.id) === String(id));
   if (!trx) return;
   
   // Tampilkan panel input form
@@ -1385,18 +1398,31 @@ async function renderTransactionsHistory() {
   // Gabungkan dengan transaksi synced
   const allTrxs = [...pendingTrxs];
   state.transactions.forEach(t => {
-    if (!allTrxs.some(pt => pt.id === t.id)) {
-      allTrxs.push(t);
+    if (t && t.id !== undefined && t.id !== null) {
+      const tIdStr = String(t.id);
+      if (!allTrxs.some(pt => pt && pt.id !== undefined && pt.id !== null && String(pt.id) === tIdStr)) {
+        allTrxs.push(t);
+      }
     }
   });
   
   const filtered = allTrxs.filter(t => {
-    if (!t || !t.id) return false; // Filter out empty or corrupt transactions
-    const isDateMatch = (!startFilter || t.tanggal >= startFilter) && (!endFilter || t.tanggal <= endFilter);
+    if (!t || t.id === undefined || t.id === null) return false; // Filter out empty or corrupt transactions
+    const tIdStr = String(t.id).toLowerCase();
+    const tTanggal = t.tanggal || "";
+    
+    const isDateMatch = (!startFilter || tTanggal >= startFilter) && (!endFilter || tTanggal <= endFilter);
+    
+    const namaPelangganStr = t.namaPelanggan ? String(t.namaPelanggan).toLowerCase() : "";
     const isSearchMatch = !searchQuery || 
-                          (t.id && t.id.toLowerCase().includes(searchQuery)) || 
-                          (t.namaPelanggan && t.namaPelanggan.toLowerCase().includes(searchQuery));
+                          tIdStr.includes(searchQuery) || 
+                          namaPelangganStr.includes(searchQuery);
     return isDateMatch && isSearchMatch;
+  }).sort((a, b) => {
+    // Urutkan: transaksi terbaru di atas (menggunakan perbandingan string lokal)
+    const aId = String(a.id);
+    const bId = String(b.id);
+    return bId.localeCompare(aId);
   });
   
   const emptyState = document.getElementById("empty-state-riwayat");
@@ -1411,7 +1437,8 @@ async function renderTransactionsHistory() {
     
     // Status sinkronisasi badge
     let syncBadge = `<span class="badge badge-success">Synced</span>`;
-    const isPending = t.id.indexOf("TEMP") > -1 || queue.some(q => q.action === "saveTransaction" && q.data.id === t.id);
+    const tIdStr = String(t.id);
+    const isPending = tIdStr.indexOf("TEMP") > -1 || queue.some(q => q.action === "saveTransaction" && q.data && q.data.id !== undefined && String(q.data.id) === tIdStr);
     if (isPending) {
       syncBadge = `<span class="badge badge-warning">Local</span>`;
     }
@@ -1440,7 +1467,7 @@ async function renderTransactionsHistory() {
 
 // Generate Invoice PDF
 async function printInvoicePDF(id) {
-  if (id.indexOf("TEMP") > -1) {
+  if (String(id).indexOf("TEMP") > -1) {
     showToast("Transaksi offline belum disinkronisasi ke Drive!");
     return;
   }
@@ -1461,10 +1488,10 @@ async function printInvoicePDF(id) {
 
 // Print Certificate PDF
 async function showCertificatesOption(id) {
-  const trx = state.transactions.find(t => t.id === id);
+  const trx = state.transactions.find(t => String(t.id) === String(id));
   if (!trx) return;
   
-  if (id.indexOf("TEMP") > -1) {
+  if (String(id).indexOf("TEMP") > -1) {
     showToast("Transaksi offline belum disinkronisasi ke Drive!");
     return;
   }
@@ -1506,18 +1533,18 @@ async function printCertificatePDF(idSertifikat) {
 
 // Send Invoice WhatsApp Link
 function sendWhatsAppInvoice(id) {
-  const trx = state.transactions.find(t => t.id === id);
+  const trx = state.transactions.find(t => String(t.id) === String(id));
   if (!trx) return;
   
   // Dapatkan nomor telpon pelanggan
-  const customer = state.customers.find(c => c.id === trx.idPelanggan);
+  const customer = state.customers.find(c => String(c.id) === String(trx.idPelanggan));
   if (!customer || !customer.phone) {
     showToast("Nomor HP pelanggan tidak terdaftar!");
     return;
   }
   
   // Format nomor WA Indonesia (misal 08 menjadi 628)
-  let rawPhone = customer.phone.replace(/[^0-9]/g, "");
+  let rawPhone = String(customer.phone).replace(/[^0-9]/g, "");
   if (rawPhone.startsWith("0")) {
     rawPhone = "62" + rawPhone.slice(1);
   }
@@ -1542,7 +1569,10 @@ function sendWhatsAppInvoice(id) {
 // ==========================================
 function setupEventListeners() {
   // Pendaftaran Pelanggan Submit
-  document.getElementById("form-pelanggan").addEventListener("submit", saveCustomerForm);
+  document.getElementById("form-pelanggan").addEventListener("submit", (e) => {
+    e.preventDefault();
+    saveCustomerForm();
+  });
   document.getElementById("btn-reset-pelanggan").addEventListener("click", resetCustomerForm);
   
   // Search customer input
@@ -1559,7 +1589,10 @@ function setupEventListeners() {
   });
   
   // Add master option form
-  document.getElementById("form-validation-item").addEventListener("submit", addMasterOption);
+  document.getElementById("form-validation-item").addEventListener("submit", (e) => {
+    e.preventDefault();
+    addMasterOption();
+  });
   
   // Sync master data button
   document.getElementById("btn-sync-master-data").addEventListener("click", syncMasterDataToServer);
@@ -1615,7 +1648,10 @@ function setupEventListeners() {
   });
   
   // Save Transaction Submit
-  document.getElementById("form-transaksi-layanan").addEventListener("submit", saveServiceTransaction);
+  document.getElementById("form-transaksi-layanan").addEventListener("submit", (e) => {
+    e.preventDefault();
+    saveServiceTransaction();
+  });
   
   // Conditionally show Proof of Transfer
   document.getElementById("layanan-metode-bayar").addEventListener("change", (e) => {
@@ -1625,8 +1661,11 @@ function setupEventListeners() {
       group.style.display = "flex";
     } else {
       group.style.display = "none";
-      document.getElementById("bukti-bayar-preview").innerHTML = "";
-      delete document.getElementById("bukti-bayar-preview").dataset.base64;
+      const preview = document.getElementById("bukti-bayar-preview");
+      preview.innerHTML = "";
+      delete preview.dataset.base64;
+      delete preview.dataset.mime;
+      delete preview.dataset.url;
     }
   });
   

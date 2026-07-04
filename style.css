@@ -816,7 +816,33 @@ textarea:focus {
   cursor: pointer;
 }
 
-/* RESPONSIVE DESIGN */
+/* Text utility classes */
+.text-center {
+  text-align: center;
+}
+
+/* Section Actions Header (segmented control container) */
+.section-actions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Dashboard Chart Card */
+.dashboard-chart-card {
+  padding: 20px;
+}
+
+/* Master Validation Layout sub-components */
+.form-add-validation {
+  padding: 20px;
+}
+
+.lists-validation {
+  padding: 20px;
+}
+
+/* Responsive Design */
 @media (max-width: 1024px) {
   .grid-half-half {
     grid-template-columns: 1fr;

@@ -4,7 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Sistem Informasi Pelayanan Cek Kadar Logam - Sovia Jewelry">
+  <meta name="theme-color" content="#007aff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>Layanan Cek Kadar Logam - Sovia Jewelry</title>
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json">
   <!-- Apple Font Stylesheet -->
   <link rel="stylesheet" href="style.css">
   <!-- Favicon / Apple Touch Icon -->
@@ -148,7 +153,7 @@
 
         <!-- SUB-PANEL A: FORM LAYANAN -->
         <div id="sub-panel-layanan-form" style="display: none;">
-          <form id="form-transaksi-layanan" onsubmit="return false;">
+          <form id="form-transaksi-layanan">
             <input type="hidden" id="layanan-edit-id" value="">
             
             <div class="glass-card form-section">
@@ -271,7 +276,7 @@
           <!-- Column 1: Input Pelanggan -->
           <div class="glass-card">
             <h3 id="form-pelanggan-title">Pendaftaran Pelanggan Baru</h3>
-            <form id="form-pelanggan" onsubmit="return false;">
+            <form id="form-pelanggan">
               <input type="hidden" id="customer-id" value="">
               
               <div class="input-group">
@@ -330,7 +335,7 @@
           <!-- Column Form Add Validation Option -->
           <div class="glass-card form-add-validation">
             <h3>Tambah Parameter Baru</h3>
-            <form id="form-validation-item" onsubmit="return false;">
+              <form id="form-validation-item">
               <div class="input-group">
                 <label for="validasi-kategori">Kategori Parameter</label>
                 <select id="validasi-kategori" required>
