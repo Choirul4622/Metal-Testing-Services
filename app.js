@@ -350,12 +350,14 @@ async function pullAllData() {
   try {
     document.getElementById("sync-text").textContent = "Mengambil data dari Sheets...";
     
-    // Ambil data secara paralel
-    const [resMaster, resCust, resTrx] = await Promise.all([
-      callGASApi("getMasterData").catch(e => { console.error(e); return { data: {} }; }),
-      callGASApi("getCustomers").catch(e => { console.error(e); return { data: [] }; }),
-      callGASApi("getTransactions", { startDate: "", endDate: "" }).catch(e => { console.error(e); return { data: [] }; })
-    ]);
+    // 1. Ambil Master Data
+    const resMaster = await callGASApi("getMasterData").catch(e => { console.error(e); return { data: {} }; });
+    
+    // 2. Ambil Pelanggan
+    const resCust = await callGASApi("getCustomers").catch(e => { console.error(e); return { data: [] }; });
+    
+    // 3. Ambil Transaksi Pelayanan
+    const resTrx = await callGASApi("getTransactions", { startDate: "", endDate: "" }).catch(e => { console.error(e); return { data: [] }; });
     
     // 1. Ambil Master Data
     state.masterData = resMaster.data || {};
