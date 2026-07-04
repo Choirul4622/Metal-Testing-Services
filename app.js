@@ -332,7 +332,9 @@ async function pullAllData() {
     
     // 3. Ambil Transaksi Pelayanan
     const resTrx = await callGASApi("getTransactions", { startDate: "", endDate: "" });
+    console.log("DEBUG: Data transaksi mentah dari server:", resTrx);
     state.transactions = Array.isArray(resTrx.data) ? resTrx.data : [];
+    console.log("DEBUG: Jumlah transaksi disimpan di state:", state.transactions.length);
     await db.clearStore("transactions");
     for (const trx of state.transactions) {
       if (trx && trx.id !== undefined && trx.id !== null) {
@@ -1406,6 +1408,7 @@ async function renderTransactionsHistory() {
     }
   });
   
+  console.log("DEBUG: Semua transaksi yang digabungkan (allTrxs):", allTrxs);
   const filtered = allTrxs.filter(t => {
     if (!t || t.id === undefined || t.id === null) return false; // Filter out empty or corrupt transactions
     const tIdStr = String(t.id).toLowerCase();
@@ -1425,6 +1428,8 @@ async function renderTransactionsHistory() {
     return bId.localeCompare(aId);
   });
   
+  console.log("DEBUG: Transaksi yang lolos filter (filtered):", filtered);
+  
   const emptyState = document.getElementById("empty-state-riwayat");
   if (filtered.length === 0) {
     emptyState.style.display = "flex";
@@ -1443,11 +1448,16 @@ async function renderTransactionsHistory() {
       syncBadge = `<span class="badge badge-warning">Local</span>`;
     }
     
+    // Render item-item detail perhiasan secara aman
+    const itemsHtml = t.items && Array.isArray(t.items) 
+      ? t.items.filter(i => i).map(i => `${i.namaLogam || "-"} (${i.berat || 0}g)`).join("<br/>")
+      : "-";
+    
     tr.innerHTML = `
       <td><strong>${t.id}</strong></td>
       <td>${formatTanggalIndo(t.tanggal)}</td>
       <td>${t.namaPelanggan}</td>
-      <td>${t.items ? t.items.map(i => `${i.namaLogam} (${i.berat}g)`).join("<br/>") : "-"}</td>
+      <td>${itemsHtml}</td>
       <td style="font-weight:700;">${formatRupiah(t.totalBiaya)}</td>
       <td><span class="badge badge-info">${t.metodePembayaran}</span></td>
       <td>${syncBadge}</td>
